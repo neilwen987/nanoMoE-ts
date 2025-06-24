@@ -86,6 +86,7 @@ class Router(nn.Module):
         self.top_k = config.top_k
         self.n_exp = config.n_exp
         assert self.top_k >= 1 and self.top_k <= config.n_exp
+        self.use_batch_topk = config.use_batch_topk
         self.use_noisy_top_k = config.use_noisy_top_k
         self.train_capacity = config.train_capacity
         self.eval_capacity = config.eval_capacity
@@ -125,19 +126,54 @@ class Router(nn.Module):
             if self.use_router_z_loss:
                 z_loss = self.compute_router_z_loss(logits)
                 MANAGER.add_router_z_loss(z_loss)
+            
+            if self.use_batch_topk:
+                # TODO: Hnadle dead tokens in traning process (from scratch)
+                # TODO: will this problem be alleviate by finetuning a model?
+                
+                # use batch top-k, 
+                # this is more efficient than per-token top-k
+                # logits shape is [B, T, n_exp]
+                top_k_logits_flat, top_k_indices_flat = torch.topk(logits.flatten(), self.top_k * num_tokens, dim=-1)
+                
+                # Check for dead tokens before creating router_probs
+                # Ensure each token has at least one expert selected
+                initial_router_probs = torch.full_like(logits.flatten(), float('-inf')).scatter_(-1, top_k_indices_flat, top_k_logits_flat).reshape(logits.shape)
+                
+                # TODO: Alternatives: select at least one expert for dead tokens
+                # # Check if any token has no experts selected (all -inf)
+                # token_has_expert = torch.any(initial_router_probs > float('-inf'), dim=-1)  # [B, T]
+                
+                # if not torch.all(token_has_expert):
+                #     # Find tokens without any experts
+                #     dead_tokens = ~token_has_expert  # [B, T]
+                    
+                #     # For dead tokens, force select their best expert
+                #     best_experts = torch.argmax(logits[dead_tokens], dim=-1)  # [num_dead_tokens]
+                    
+                #     # Add the best expert for each dead token
+                #     dead_token_coords = torch.where(dead_tokens)
+                #     for i, (batch_idx, token_idx) in enumerate(zip(dead_token_coords[0], dead_token_coords[1])):
+                #         expert_idx = best_experts[i]
+                #         initial_router_probs[batch_idx, token_idx, expert_idx] = logits[batch_idx, token_idx, expert_idx]
+                
+                router_probs = initial_router_probs
+                # transform to [B, T, n_exp] format
+                top_k_logits, top_k_indices = router_probs.topk(self.top_k, dim=-1)
+            else:
+                # find top k experts for each token
+                top_k_logits, top_k_indices = logits.topk(self.top_k, dim=-1) # [B, T, k]
 
-            # find top k experts for each token
-            top_k_logits, top_k_indices = logits.topk(self.top_k, dim=-1) # [B, T, k]
+                # normalize expert probabilities
+                # Question: should we normalize over all experts or just top-k?
+                # we choose to normalize over top-k, other option is commented out below
 
-            # normalize expert probabilities
-            # Question: should we normalize over all experts or just top-k?
-            # we choose to normalize over top-k, other option is commented out below
-
-            # Shazeer et al (https://arxiv.org/abs/1701.06538) does only topk
-            # see page 4 eq (3)-(5), the code for this is commented out below
-            router_probs = torch.full_like(logits, float('-inf'))  # [B, T, n_exp]
-            router_probs.scatter_(-1, top_k_indices, top_k_logits)
+                # Shazeer et al (https://arxiv.org/abs/1701.06538) does only topk
+                # see page 4 eq (3)-(5), the code for this is commented out below
+                router_probs = torch.full_like(logits, float('-inf'))  # [B, T, n_exp]
+                router_probs.scatter_(-1, top_k_indices, top_k_logits)
             router_probs = F.softmax(router_probs, dim=-1)
+            router_probs = torch.nan_to_num(router_probs, nan=0.0)
 
             # # normalize all router logits (not just top-k) via softmax      
             # router_probs = F.softmax(logits, dim=-1)
@@ -350,6 +386,7 @@ class GPTConfig:
     # MoE-related configs 
     n_exp: int = 1 # if n_exp = 1 we just use regular MLP layers
     top_k: int = 2
+    use_batch_topk: bool = False # use batch top-k (from ST-MoE) instead of per-token top-k
     use_aux_loss: bool = False # apply auxiliary loss (from Switch Transformer) in router
     use_router_z_loss: bool = False # apply router z loss (from ST-MoE)
     use_noisy_top_k: bool = False
