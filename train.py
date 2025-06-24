@@ -45,27 +45,28 @@ always_save_checkpoint = True # if True, always save a checkpoint after each eva
 init_from = 'scratch' # 'scratch' or 'resume' or 'gpt2*'
 
 # wandb logging
-wandb_log = True # False # disabled by default
+wandb_log = False # False # disabled by default
 wandb_project = 'nano-moe'
 wandb_run_name = 'gpt2-124M-owt' + str(time.time())
 
 # data
 dataset = 'openwebtext'
 gradient_accumulation_steps = 5 * 8 # used to simulate larger batch sizes
-batch_size = 12 # if gradient_accumulation_steps > 1, this is the micro-batch size
+batch_size = 2 # if gradient_accumulation_steps > 1, this is the micro-batch size
 block_size = 1024
 
 # model
-n_layer = 12
-n_head = 12
+n_layer = 2
+n_head = 2
 n_embd = 768
 dropout = 0.0 # for pretraining 0 is good, for finetuning try 0.1+
 bias = False # do we use bias inside LayerNorm and Linear layers?
 
 # moe
-n_exp = 1 # if n_exp = 1 we just use regular MLP layers
+n_exp = 8 # if n_exp = 1 we just use regular MLP layers
 top_k = 2
-use_aux_loss = False
+use_batch_topk = False # use batch top-k for routing, otherwise use per-example top-k
+use_aux_loss = True
 use_router_z_loss = False
 use_noisy_top_k = False
 aux_loss_weight = 0.001
@@ -180,7 +181,8 @@ model_args = dict(n_layer=n_layer, n_head=n_head, n_embd=n_embd, block_size=bloc
                   router_z_loss_weight=router_z_loss_weight, train_capacity=train_capacity,
                   eval_capacity=eval_capacity, min_capacity=min_capacity, stride=stride,
                   use_switch_tfm_init=use_switch_tfm_init, switch_tfm_init_scale=switch_tfm_init_scale,
-                  router_use_full_prec=router_use_full_prec) # start with model_args from command line
+                  router_use_full_prec=router_use_full_prec,
+                  use_batch_topk=use_batch_topk) # start with model_args from command line
 print('\n\n')
 print(model_args)
 print('\n\n')
@@ -196,12 +198,12 @@ if init_from == 'scratch':
 elif init_from == 'resume':
     print(f"Resuming training from {out_dir}")
     # resume training from a checkpoint.
-    ckpt_path = os.path.join(out_dir, 'ckpt.pt')
+    ckpt_path = os.path.join('/home/ubuntu/tiansheng/nanoMoE-ts/out/pre_trained_moe_ckpt.pt')
     checkpoint = torch.load(ckpt_path, map_location=device)
     checkpoint_model_args = checkpoint['model_args']
     # force these config attributes to be equal otherwise we can't even resume training
     # the rest of the attributes (e.g. dropout) can stay as desired from command line
-    for k in ['n_layer', 'n_head', 'n_embd', 'block_size', 'bias', 'vocab_size']:
+    for k in ['n_layer', 'n_head', 'n_embd', 'block_size', 'bias', 'vocab_size','n_exp', 'top_k',]:
         model_args[k] = checkpoint_model_args[k]
     # create the model
     gptconf = GPTConfig(**model_args)
@@ -214,8 +216,8 @@ elif init_from == 'resume':
         if k.startswith(unwanted_prefix):
             state_dict[k[len(unwanted_prefix):]] = state_dict.pop(k)
     model.load_state_dict(state_dict)
-    iter_num = checkpoint['iter_num']
-    best_val_loss = checkpoint['best_val_loss']
+    # iter_num = checkpoint['iter_num']
+    # best_val_loss = checkpoint['best_val_loss']
 elif init_from.startswith('gpt2'):
     print(f"Initializing from OpenAI GPT-2 weights: {init_from}")
     # initialize from OpenAI GPT-2 weights

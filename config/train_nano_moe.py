@@ -12,6 +12,7 @@ wandb_run_name ='gpt2-124M-moe-owt ' + time.strftime('%Y-%m-%d %H:%M:%S')
 # model/moe settings
 n_exp = 8
 top_k = 2
+use_batch_topk = False
 use_aux_loss = True
 aux_loss_weight = 0.01
 use_router_z_loss = True
@@ -24,9 +25,9 @@ use_switch_tfm_init = True
 router_use_full_prec = True
 
 # use smaller GPT model
-n_layer = 6
-n_head = 6
-n_embd = 384
+n_layer = 8  # 6
+n_head = 8   # 6
+n_embd = 512     # 384
 
 # these make the total batch size be ~0.5M
 # 12 batch size * 1024 block size * 5 gradaccum * 8 GPUs = 491,520
