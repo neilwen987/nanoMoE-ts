@@ -224,7 +224,7 @@ def main():
     parser = argparse.ArgumentParser(description='在WikiText数据集上评估模型')
     parser.add_argument('--model_path', type=str, required=True,
                        help='模型检查点路径')
-    parser.add_argument('--data_dir', type=str, default='data/wikitext2',
+    parser.add_argument('--data_dir', type=str, default='data/wikitext2/wikitext2_data',
                        help='WikiText数据目录路径')
     parser.add_argument('--dataset', type=str, default='wikitext-2-v1',
                        choices=list(AVAILABLE_DATASETS.keys()),

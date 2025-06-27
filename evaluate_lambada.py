@@ -8,6 +8,7 @@ import os
 import json
 import numpy as np
 import torch
+import torch.nn.functional as F
 import tiktoken
 from contextlib import nullcontext
 from tqdm import tqdm
@@ -27,11 +28,13 @@ def load_lambada_data(data_dir='data/lambada'):
 def evaluate_lambada(model, device, contexts, targets, examples, batch_size=1):
     """
     Evaluate model on LAMBADA dataset.
-    Returns accuracy as the percentage of correctly predicted final words.
+    Returns accuracy and perplexity.
     """
     model.eval()
     correct = 0
     total = len(contexts)
+    total_loss = 0.0
+    valid_examples = 0
     
     # Initialize tokenizer
     enc = tiktoken.get_encoding("gpt2")
@@ -45,6 +48,10 @@ def evaluate_lambada(model, device, contexts, targets, examples, batch_size=1):
             context_tokens = contexts[i]
             target_tokens = targets[i]
             
+            # Skip if target is empty
+            if len(target_tokens) == 0:
+                continue
+                
             # Prepare input
             context_tensor = torch.tensor(context_tokens, dtype=torch.long, device=device).unsqueeze(0)
             
@@ -59,18 +66,31 @@ def evaluate_lambada(model, device, contexts, targets, examples, batch_size=1):
                 # Get the logits for next token prediction
                 next_token_logits = logits[0, -1, :]  # Last position
                 
-                # Get the most likely next token
+                # Calculate perplexity for the target token(s)
+                # For LAMBADA, we typically care about the first target token
+                target_token = target_tokens[0]
+                
+                # Calculate cross-entropy loss for perplexity
+                loss = F.cross_entropy(next_token_logits.unsqueeze(0), 
+                                     torch.tensor([target_token], device=device))
+                total_loss += loss.item()
+                valid_examples += 1
+                
+                # Get the most likely next token for accuracy
                 predicted_token = torch.argmax(next_token_logits).item()
                 
                 # Check if prediction matches target
-                # For multi-token targets, we only check the first token
-                if predicted_token == target_tokens[0]:
+                if predicted_token == target_token:
                     correct += 1
     
-    accuracy = correct / total * 100
-    print(f"LAMBADA Accuracy: {accuracy:.2f}% ({correct}/{total})")
+    # Calculate metrics
+    accuracy = correct / total * 100 if total > 0 else 0
+    perplexity = torch.exp(torch.tensor(total_loss / valid_examples)).item() if valid_examples > 0 else float('inf')
     
-    return accuracy, correct, total
+    print(f"LAMBADA Accuracy: {accuracy:.2f}% ({correct}/{total})")
+    print(f"LAMBADA Perplexity: {perplexity:.2f}")
+    
+    return accuracy, perplexity, correct, total
 
 def main():
     parser = argparse.ArgumentParser(description='Evaluate model on LAMBADA dataset')
@@ -122,13 +142,14 @@ def main():
     
     # Evaluate
     print("Starting LAMBADA evaluation...")
-    accuracy, correct, total = evaluate_lambada(
+    accuracy, perplexity, correct, total = evaluate_lambada(
         model, device, contexts, targets, examples, args.batch_size
     )
     
     # Print results
     print(f"\nLAMBADA Results:")
     print(f"Accuracy: {accuracy:.2f}%")
+    print(f"Perplexity: {perplexity:.2f}")
     print(f"Correct: {correct}")
     print(f"Total: {total}")
 
