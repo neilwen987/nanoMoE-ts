@@ -7,12 +7,12 @@ import time
 wandb_log = True
 init_from = 'scratch'
 wandb_project = 'nano-moe'
-wandb_run_name ='gpt2-124M-moe-owt ' + time.strftime('%Y-%m-%d %H:%M:%S')
+wandb_run_name ='small-moe-Topk ' + time.strftime('%Y-%m-%d %H:%M:%S')
 
 # model/moe settings
+use_batch_topk = False
 n_exp = 8
 top_k = 2
-use_batch_topk = False
 use_aux_loss = True
 aux_loss_weight = 0.01
 use_router_z_loss = True
@@ -20,14 +20,14 @@ router_z_loss_weight = 0.001
 use_noisy_top_k = False
 train_capacity = 1.25
 eval_capacity = 2.0
-stride = 2
+stride = 1
 use_switch_tfm_init = True
 router_use_full_prec = True
 
 # use smaller GPT model
-n_layer = 8  # 6
-n_head = 8   # 6
-n_embd = 512     # 384
+n_layer = 6
+n_head = 6
+n_embd = 384
 
 # these make the total batch size be ~0.5M
 # 12 batch size * 1024 block size * 5 gradaccum * 8 GPUs = 491,520
@@ -36,8 +36,8 @@ block_size = 1024
 gradient_accumulation_steps = 5 * 8
 
 # this makes total number of tokens be 25B
-max_iters = 50000
-lr_decay_iters = 50000
+max_iters = 25000
+lr_decay_iters = 25000
 
 # eval stuff
 eval_interval = 500

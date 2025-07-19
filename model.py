@@ -126,40 +126,15 @@ class Router(nn.Module):
             if self.use_router_z_loss:
                 z_loss = self.compute_router_z_loss(logits)
                 MANAGER.add_router_z_loss(z_loss)
-            
+
             if self.use_batch_topk:
-                # TODO: Hnadle dead tokens in traning process (from scratch)
-                # TODO: will this problem be alleviate by finetuning a model?
-                
-                # use batch top-k, 
+                # use batch top-k, see page 4 eq (3) in (https://arxiv.org/abs/2101.03961)
                 # this is more efficient than per-token top-k
-                # logits shape is [B, T, n_exp]
-                top_k_logits_flat, top_k_indices_flat = torch.topk(logits.flatten(), self.top_k * num_tokens, dim=-1)
-                
-                # Check for dead tokens before creating router_probs
-                # Ensure each token has at least one expert selected
-                initial_router_probs = torch.full_like(logits.flatten(), float('-inf')).scatter_(-1, top_k_indices_flat, top_k_logits_flat).reshape(logits.shape)
-                
-                # TODO: Alternatives: select at least one expert for dead tokens
-                # # Check if any token has no experts selected (all -inf)
-                # token_has_expert = torch.any(initial_router_probs > float('-inf'), dim=-1)  # [B, T]
-                
-                # if not torch.all(token_has_expert):
-                #     # Find tokens without any experts
-                #     dead_tokens = ~token_has_expert  # [B, T]
-                    
-                #     # For dead tokens, force select their best expert
-                #     best_experts = torch.argmax(logits[dead_tokens], dim=-1)  # [num_dead_tokens]
-                    
-                #     # Add the best expert for each dead token
-                #     dead_token_coords = torch.where(dead_tokens)
-                #     for i, (batch_idx, token_idx) in enumerate(zip(dead_token_coords[0], dead_token_coords[1])):
-                #         expert_idx = best_experts[i]
-                #         initial_router_probs[batch_idx, token_idx, expert_idx] = logits[batch_idx, token_idx, expert_idx]
-                
-                router_probs = initial_router_probs
-                # transform to [B, T, n_exp] format
-                top_k_logits, top_k_indices = router_probs.topk(self.top_k, dim=-1)
+                top_k_logits_flat, top_k_indices_flat = torch.topk(router_probs.view(B,-1), self.top_k * T, dim=-1)
+                router_probs = torch.zeros_like(router_probs.view(B,-1)).scatter_(-1, top_k_indices_flat, top_k_logits_flat).reshape(router_probs.shape)
+                num_selected_per_token = (router_probs > 0).sum(dim=-1)  # (N_tokens,)
+                max_selected = int(num_selected_per_token.max().item())
+                top_k_logits, top_k_indices = torch.topk(router_probs, max_selected, dim=-1)
             else:
                 # find top k experts for each token
                 top_k_logits, top_k_indices = logits.topk(self.top_k, dim=-1) # [B, T, k]
@@ -172,8 +147,7 @@ class Router(nn.Module):
                 # see page 4 eq (3)-(5), the code for this is commented out below
                 router_probs = torch.full_like(logits, float('-inf'))  # [B, T, n_exp]
                 router_probs.scatter_(-1, top_k_indices, top_k_logits)
-            router_probs = F.softmax(router_probs, dim=-1)
-            router_probs = torch.nan_to_num(router_probs, nan=0.0)
+                router_probs = F.softmax(router_probs, dim=-1)
 
             # # normalize all router logits (not just top-k) via softmax      
             # router_probs = F.softmax(logits, dim=-1)
@@ -229,7 +203,6 @@ class Router(nn.Module):
             cb_weight = torch.sum(exp_weights.unsqueeze(3) * exp_rank_sc.unsqueeze(2), dim=0)
             sec_mask = cb_weight.bool() # binary mask of selected experts for each token
             return used_capacity, cb_weight, sec_mask
-    
     def compute_aux_loss(self, expert_probs: torch.Tensor, indices: torch.Tensor):
         """
         Computes Switch Transformer auxiliary loss (https://arxiv.org/abs/2101.03961)
